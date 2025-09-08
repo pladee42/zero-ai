@@ -245,14 +245,16 @@ body {
 }
 
 .header-spacer {
-    width: 0; /* No space needed on desktop */
+    flex-grow: 1; /* Fill remaining space on desktop */
     height: 44px;
-    flex-shrink: 0;
+    min-width: 0; /* Allow shrinking if needed */
 }
 
 @media (max-width: 768px) {
     .header-spacer {
-        width: 44px; /* Same width as mobile menu button */
+        flex-grow: 0; /* Don't grow on mobile */
+        width: 44px; /* Fixed width for hamburger menu space */
+        flex-shrink: 0; /* Don't shrink on mobile */
     }
 }
 
@@ -1052,6 +1054,7 @@ body {
 
     .model-selector-modern {
         min-width: 180px;
+        margin-left: 60px; /* Space for hamburger menu button */
     }
     
     .model-selector-trigger {
