@@ -585,6 +585,80 @@ body {
     font-weight: 500;
 }
 
+.message-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.message.user .message-attachments {
+    justify-content: flex-end;
+}
+
+.message-attachment {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(18, 18, 18, 0.85);
+    border: 1px solid #2b2b2b;
+    border-radius: 12px;
+    padding: 10px;
+    max-width: 240px;
+    transition: border-color 0.2s, transform 0.2s;
+}
+
+.message-attachment:hover {
+    border-color: #284B63;
+    transform: translateY(-1px);
+}
+
+.message-attachment.image img {
+    width: 100%;
+    max-height: 200px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 1px solid #333;
+    display: block;
+}
+
+.message-attachment-link {
+    color: #BB86FC;
+    font-size: 13px;
+    word-break: break-all;
+    text-decoration: none;
+}
+
+.message-attachment-link:hover {
+    text-decoration: underline;
+}
+
+.message-attachment-name {
+    font-size: 12px;
+    color: #FFFFFF;
+    font-family: 'ClashGrotesk-Medium';
+    word-break: break-word;
+}
+
+.message-attachment-meta {
+    font-size: 11px;
+    color: #9E9E9E;
+}
+
+.message-attachment-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    background: #1E1E1E;
+    border: 1px solid #333;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #BB86FC;
+    font-family: 'ClashGrotesk-Medium';
+}
+
 /* Chat input area */
 .chat-input-area {
     padding: 24px;
@@ -601,7 +675,7 @@ body {
 .input-container {
     display: flex;
     gap: 12px;
-    align-items: flex-end;
+    align-items: center;
 }
 
 .chat-input {
@@ -647,6 +721,138 @@ body {
 
 .send-button:active {
     transform: scale(0.95);
+}
+
+.attachment-button {
+    width: 44px;
+    height: 44px;
+    background: #1E1E1E;
+    border: 2px solid #333;
+    border-radius: 12px;
+    color: #c5c5c5;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.attachment-button:hover {
+    border-color: #284B63;
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(40, 75, 99, 0.25);
+}
+
+.attachment-button:active {
+    transform: scale(0.94);
+}
+
+.attachment-input {
+    display: none;
+}
+
+.attachment-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.attachment-preview:empty {
+    display: none;
+}
+
+.attachment-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(30, 30, 30, 0.9);
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 8px 12px;
+    position: relative;
+    max-width: 220px;
+    overflow: hidden;
+}
+
+.attachment-item.image .attachment-thumb img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #333;
+}
+
+.attachment-thumb {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    background: #1E1E1E;
+    border: 1px solid #333;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #BB86FC;
+    font-size: 18px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.attachment-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.attachment-name {
+    font-size: 13px;
+    color: #FFFFFF;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: 'ClashGrotesk-Medium';
+}
+
+.attachment-size {
+    font-size: 11px;
+    color: #9E9E9E;
+}
+
+.attachment-remove {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: transparent;
+    border: none;
+    color: #9e9e9e;
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s, transform 0.2s;
+}
+
+.attachment-remove:hover {
+    color: #ffffff;
+    transform: scale(1.1);
+}
+
+.attachment-feedback {
+    font-size: 12px;
+    color: #9E9E9E;
+    margin-bottom: 12px;
+    min-height: 16px;
+}
+
+.attachment-feedback.error {
+    color: #CF6679;
+}
+
+.attachment-feedback.warning {
+    color: #F5A623;
 }
 
 /* Anti-Sycophancy Control Panel */

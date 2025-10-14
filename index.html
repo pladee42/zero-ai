@@ -120,7 +120,14 @@
 
                 <!-- Chat input area -->
                 <div class="chat-input-area">
+                    <div class="attachment-preview" id="attachmentPreview" aria-live="polite"></div>
+                    <div class="attachment-feedback" id="attachmentFeedback" role="status" aria-live="polite"></div>
                     <div class="input-container">
+                        <button id="attachmentButton" class="attachment-button" type="button" aria-label="Add attachment">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M16.5 6.5l-7.2 7.19a3 3 0 104.24 4.25l6.01-6.01a4.5 4.5 0 00-6.37-6.37L6.17 14.47"></path>
+                            </svg>
+                        </button>
                         <textarea 
                             id="chatInput" 
                             class="chat-input" 
@@ -133,6 +140,8 @@
                             </svg>
                         </button>
                     </div>
+                    <input id="attachmentInput" class="attachment-input" type="file" multiple 
+                        accept="image/*,.pdf,.txt,.md,.json,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx"/>
                 </div>
                 
             </section>
