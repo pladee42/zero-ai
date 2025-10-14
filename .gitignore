@@ -6,3 +6,5 @@ config.private.json
 claude_*
 .DS_*
 .history
+AGENT*
+codex*

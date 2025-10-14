@@ -122,6 +122,34 @@ let pushbackCount = 0;
 let config = null;
 let selectedModel = 'openai/gpt-4';
 
+// Attachment handling configuration
+const ATTACHMENT_LIMIT = 5;
+const ATTACHMENT_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB per file to keep demo responsive
+const ALLOWED_ATTACHMENT_TYPES = [
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+    'image/svg+xml',
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+    'application/json',
+    'text/csv',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+];
+const ALLOWED_ATTACHMENT_EXTENSIONS = [
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg',
+    '.pdf', '.txt', '.md', '.json', '.csv',
+    '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'
+];
+let pendingAttachments = [];
+
 // Chat management system
 class ChatManager {
     constructor() {
@@ -167,6 +195,7 @@ class ChatManager {
         messageHistory = [];
         disagreementCount = 0;
         pushbackCount = 0;
+        clearPendingAttachments(true);
         
         this.saveToStorage();
         return chatId;
@@ -185,7 +214,10 @@ class ChatManager {
             if (this.chats[this.currentChatId].title === 'New Chat' && messageHistory.length > 0) {
                 const firstUserMessage = messageHistory.find(msg => msg.sender === 'user');
                 if (firstUserMessage) {
-                    this.chats[this.currentChatId].title = this.generateChatTitle(firstUserMessage.content);
+                    const previewText = getMessagePreviewText(firstUserMessage);
+                    if (previewText) {
+                        this.chats[this.currentChatId].title = this.generateChatTitle(previewText);
+                    }
                 }
             }
         }
@@ -204,6 +236,7 @@ class ChatManager {
         const chat = this.chats[chatId];
         this.currentChatId = chatId;
         messageHistory = [...chat.messages];
+        clearPendingAttachments(true);
         
         // Handle parameter migration for backward compatibility
         const loadedParameters = migrateToContextAware(chat.parameters || {});
@@ -378,6 +411,7 @@ function handleChatDeletion(chatId) {
         // If we deleted the current chat, handle the transition
         if (wasCurrentChat) {
             messageHistory = [];
+            clearPendingAttachments(true);
             
             // Check if any chats remain
             const remainingChats = chatManager.getAllChats();
@@ -400,12 +434,257 @@ function handleChatDeletion(chatId) {
     }
 }
 
+function createMessageElement(message) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${message.sender}`;
+    
+    if (message.sender === 'ai') {
+        const badge = document.createElement('div');
+        badge.className = 'personality-badge';
+        badge.textContent = getPersonalityBadgeFromParameters(message.parameters || currentParameters);
+        messageDiv.appendChild(badge);
+        
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        bubble.innerHTML = formatMessage(message.content || '');
+        messageDiv.appendChild(bubble);
+    } else {
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        bubble.innerHTML = escapeUserMessageContent(message.content || '');
+        messageDiv.appendChild(bubble);
+    }
+    
+    if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+        const attachmentsWrapper = document.createElement('div');
+        attachmentsWrapper.className = 'message-attachments';
+        
+        message.attachments.forEach(attachment => {
+            attachmentsWrapper.appendChild(createMessageAttachmentElement(attachment));
+        });
+        
+        messageDiv.appendChild(attachmentsWrapper);
+    }
+    
+    return messageDiv;
+}
+
+function escapeUserMessageContent(content) {
+    return (content || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;')
+        .replace(/\n/g, '<br>');
+}
+
+function createMessageAttachmentElement(attachment) {
+    const displayType = getAttachmentDisplayType(attachment);
+    const wrapper = document.createElement('div');
+    wrapper.className = `message-attachment ${displayType}`;
+    
+    if (displayType === 'image' && attachment.dataUrl) {
+        const link = document.createElement('a');
+        link.href = attachment.dataUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'message-attachment-link';
+        link.setAttribute('aria-label', `Open image ${attachment.name} in new tab`);
+        
+        const image = document.createElement('img');
+        image.src = attachment.dataUrl;
+        image.alt = attachment.name || 'attachment image';
+        link.appendChild(image);
+        
+        wrapper.appendChild(link);
+        
+        const caption = document.createElement('span');
+        caption.className = 'message-attachment-name';
+        caption.textContent = attachment.name || 'Image';
+        wrapper.appendChild(caption);
+    } else {
+        const icon = document.createElement('div');
+        icon.className = 'message-attachment-icon';
+        icon.textContent = getAttachmentLabel(attachment.name);
+        wrapper.appendChild(icon);
+        
+        if (attachment.dataUrl) {
+            const link = document.createElement('a');
+            link.href = attachment.dataUrl;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.download = attachment.name || 'attachment';
+            link.className = 'message-attachment-link';
+            link.textContent = attachment.name || 'Attachment';
+            wrapper.appendChild(link);
+        } else {
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'message-attachment-name';
+            nameSpan.textContent = attachment.name || 'Attachment';
+            wrapper.appendChild(nameSpan);
+        }
+        
+        const meta = document.createElement('span');
+        meta.className = 'message-attachment-meta';
+        meta.textContent = formatFileSize(attachment.size);
+        wrapper.appendChild(meta);
+    }
+    
+    return wrapper;
+}
+
+function getAttachmentDisplayType(attachment) {
+    return isImageAttachment(attachment) ? 'image' : 'file';
+}
+
+function isImageAttachment(attachment) {
+    if (!attachment) return false;
+    if (attachment.displayType === 'image') return true;
+    const type = (attachment.type || '').toLowerCase();
+    return type.startsWith('image/');
+}
+
+function getAttachmentLabel(name) {
+    const ext = getFileExtension(name);
+    return ext ? ext.substring(1, Math.min(4, ext.length)).toUpperCase() : 'FILE';
+}
+
+function getFileExtension(name = '') {
+    const lastDot = name.lastIndexOf('.');
+    if (lastDot === -1) return '';
+    return name.substring(lastDot).toLowerCase();
+}
+
+function formatFileSize(bytes) {
+    if (!bytes && bytes !== 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+    }
+    
+    const formatted = size % 1 === 0 ? size : size.toFixed(1);
+    return `${formatted} ${units[unitIndex]}`;
+}
+
+function getMessagePreviewText(message) {
+    if (!message) return '';
+    const base = (message.content || '').trim();
+    if (base) {
+        return base;
+    }
+    
+    if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+        const names = message.attachments.map(att => att.name).filter(Boolean);
+        return names.length > 0 ? `Attachments: ${names.join(', ')}` : 'Attachments';
+    }
+    
+    return '';
+}
+
+function composeMessageContentForModel(message) {
+    if (!message) {
+        return [{ type: 'text', text: '' }];
+    }
+    
+    const sections = [];
+    const baseContent = typeof message.content === 'string' ? message.content.trim() : '';
+    if (baseContent) {
+        sections.push({ type: 'text', text: baseContent });
+    }
+    
+    if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+        message.attachments.forEach(attachment => {
+            const part = convertAttachmentToContentPart(attachment);
+            if (part) {
+                sections.push(part);
+            }
+        });
+    }
+    
+    if (sections.length === 0) {
+        return [{ type: 'text', text: '' }];
+    }
+    
+    return sections;
+}
+
+function convertAttachmentToContentPart(attachment) {
+    if (!attachment) {
+        return null;
+    }
+    
+    const dataUrl = attachment.dataUrl;
+    if (dataUrl && isImageAttachment(attachment)) {
+        return {
+            type: 'image_url',
+            image_url: { url: dataUrl }
+        };
+    }
+    
+    if (dataUrl) {
+        return {
+            type: 'file',
+            file: {
+                filename: attachment.name || 'attachment',
+                file_data: dataUrl
+            }
+        };
+    }
+    
+    const descriptorParts = [];
+    if (attachment.type) descriptorParts.push(attachment.type);
+    if (Number.isFinite(attachment.size)) descriptorParts.push(formatFileSize(attachment.size));
+    const descriptorText = descriptorParts.length ? ` (${descriptorParts.join(', ')})` : '';
+    
+    return {
+        type: 'text',
+        text: `Attachment: ${attachment.name || 'file'}${descriptorText}`
+    };
+}
+
+function convertMessageForApi(message) {
+    return {
+        role: message.sender === 'user' ? 'user' : 'assistant',
+        content: composeMessageContentForModel(message)
+    };
+}
+
+function buildPromptInput(latestUserMessage) {
+    if (!latestUserMessage) {
+        return '';
+    }
+    
+    const segments = [];
+    const textContent = (latestUserMessage.content || '').trim();
+    if (textContent) {
+        segments.push(textContent);
+    }
+    
+    if (Array.isArray(latestUserMessage.attachments) && latestUserMessage.attachments.length > 0) {
+        const lines = latestUserMessage.attachments.map(att => {
+            const descriptorParts = [];
+            if (att.type) descriptorParts.push(att.type);
+            if (Number.isFinite(att.size)) descriptorParts.push(formatFileSize(att.size));
+            if (att.source) descriptorParts.push(`source=${att.source}`);
+            const descriptor = descriptorParts.length ? ` (${descriptorParts.join(', ')})` : '';
+            return `- ${att.name || 'attachment'}${descriptor}`;
+        });
+        segments.push(`Attachments:\n${lines.join('\n')}`);
+    }
+    
+    return segments.join('\n\n');
+}
+
 function renderChatMessages() {
     const chatMessages = document.getElementById('chatMessages');
     chatMessages.innerHTML = '';
     
     if (messageHistory.length === 0) {
-        // Show welcome message for new chats
         chatMessages.innerHTML = `
             <div class="message ai">
                 <div class="personality-badge">Direct • Confident • Formal</div>
@@ -418,29 +697,7 @@ function renderChatMessages() {
     }
     
     messageHistory.forEach(msg => {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${msg.sender}`;
-        
-        if (msg.sender === 'ai') {
-            const personalityBadge = getPersonalityBadgeFromParameters(msg.parameters || currentParameters);
-            const formattedContent = formatMessage(msg.content);
-            messageDiv.innerHTML = `
-                <div class="personality-badge">${personalityBadge}</div>
-                <div class="message-bubble">${formattedContent}</div>
-            `;
-        } else {
-            // For user messages, escape HTML but preserve line breaks
-            const escapedContent = msg.content
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;')
-                .replace(/\n/g, '<br>');
-            messageDiv.innerHTML = `<div class="message-bubble">${escapedContent}</div>`;
-        }
-        
-        chatMessages.appendChild(messageDiv);
+        chatMessages.appendChild(createMessageElement(msg));
     });
     
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -1067,6 +1324,8 @@ function initializeChatInput() {
     const chatInput = document.getElementById('chatInput');
     const sendButton = document.getElementById('sendButton');
     
+    initializeAttachmentHandling(chatInput);
+    
     // Auto-resize textarea
     chatInput.addEventListener('input', function() {
         this.style.height = 'auto';
@@ -1083,6 +1342,293 @@ function initializeChatInput() {
             sendMessage();
         }
     });
+}
+
+function initializeAttachmentHandling(chatInput) {
+    const attachmentButton = document.getElementById('attachmentButton');
+    const attachmentInput = document.getElementById('attachmentInput');
+    
+    if (!attachmentButton || !attachmentInput || !chatInput) {
+        return;
+    }
+    
+    attachmentButton.addEventListener('click', () => {
+        attachmentInput.click();
+    });
+    
+    attachmentInput.addEventListener('change', async (event) => {
+        const files = Array.from(event.target.files || []);
+        if (files.length > 0) {
+            await handleAttachmentSelection(files, 'upload');
+            attachmentInput.value = '';
+        }
+    });
+    
+    chatInput.addEventListener('paste', async (event) => {
+        const clipboardItems = event.clipboardData && event.clipboardData.items;
+        if (!clipboardItems || clipboardItems.length === 0) {
+            return;
+        }
+        
+        const files = [];
+        let index = 0;
+        for (const item of clipboardItems) {
+            if (item.kind !== 'file') continue;
+            const blob = item.getAsFile();
+            if (!blob) continue;
+            
+            const type = (blob.type || '').toLowerCase();
+            if (!type.startsWith('image/')) {
+                // Only support pasting images for now
+                continue;
+            }
+            
+            const extension = type.split('/')[1] || 'png';
+            const fallbackName = `clipboard-${Date.now()}-${index}.${extension}`;
+            const fileName = blob.name && blob.name.trim().length > 0 ? blob.name : fallbackName;
+            const file = new File([blob], fileName, { type: blob.type || `image/${extension}` });
+            files.push(file);
+            index++;
+        }
+        
+        if (files.length === 0) {
+            return;
+        }
+        
+        // Prevent default only when no text payload is present to avoid losing pasted text
+        const hasTextPayload = event.clipboardData.getData('text');
+        if (!hasTextPayload) {
+            event.preventDefault();
+        }
+        
+        await handleAttachmentSelection(files, 'clipboard');
+    });
+    
+    renderAttachmentPreviews();
+}
+
+async function handleAttachmentSelection(files, source) {
+    if (!files || files.length === 0) return;
+    
+    let addedCount = 0;
+    let hadError = false;
+    let hadWarning = false;
+    for (const file of files) {
+        if (!(file instanceof File)) continue;
+        
+        if (pendingAttachments.length >= ATTACHMENT_LIMIT) {
+            showAttachmentFeedback(`You can attach up to ${ATTACHMENT_LIMIT} items per message.`, 'warning');
+            hadWarning = true;
+            break;
+        }
+        
+        if (!isFileTypeAllowed(file)) {
+            showAttachmentFeedback(`"${file.name || 'File'}" is not a supported file type for this demo.`, 'error');
+            hadError = true;
+            continue;
+        }
+        
+        if (file.size > ATTACHMENT_SIZE_LIMIT) {
+            const limitMb = Math.round(ATTACHMENT_SIZE_LIMIT / (1024 * 1024));
+            showAttachmentFeedback(`"${file.name}" is larger than the ${limitMb}MB limit for demo attachments.`, 'error');
+            hadError = true;
+            continue;
+        }
+        
+        try {
+            const dataUrl = await readFileAsDataURL(file);
+            const normalizedType = file.type || inferMimeTypeFromExtension(file.name);
+            const displayType = normalizedType && normalizedType.startsWith('image/') ? 'image' : 'file';
+            
+            pendingAttachments.push({
+                id: generateAttachmentId(),
+                name: file.name || 'attachment',
+                type: normalizedType,
+                size: file.size,
+                source,
+                dataUrl,
+                displayType
+            });
+            addedCount++;
+        } catch (error) {
+            console.error('Failed to process attachment', error);
+            showAttachmentFeedback(`Could not add "${file.name || 'attachment'}". Please try again.`, 'error');
+            hadError = true;
+        }
+    }
+    
+    if (addedCount > 0 && !hadError && !hadWarning) {
+        clearAttachmentFeedback();
+    }
+    
+    renderAttachmentPreviews();
+}
+
+function generateAttachmentId() {
+    return `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isFileTypeAllowed(file) {
+    const type = (file.type || '').toLowerCase();
+    const extension = getFileExtension(file.name);
+    
+    if (type.startsWith('image/')) {
+        return true;
+    }
+    
+    const typeAllowed = type && ALLOWED_ATTACHMENT_TYPES.includes(type);
+    const extensionAllowed = extension && ALLOWED_ATTACHMENT_EXTENSIONS.includes(extension);
+    
+    return typeAllowed || extensionAllowed;
+}
+
+function inferMimeTypeFromExtension(name) {
+    const extension = getFileExtension(name);
+    switch (extension) {
+        case '.png':
+            return 'image/png';
+        case '.jpg':
+        case '.jpeg':
+            return 'image/jpeg';
+        case '.gif':
+            return 'image/gif';
+        case '.webp':
+            return 'image/webp';
+        case '.svg':
+            return 'image/svg+xml';
+        case '.pdf':
+            return 'application/pdf';
+        case '.txt':
+            return 'text/plain';
+        case '.md':
+            return 'text/markdown';
+        case '.json':
+            return 'application/json';
+        case '.csv':
+            return 'text/csv';
+        case '.doc':
+            return 'application/msword';
+        case '.docx':
+            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        case '.xls':
+            return 'application/vnd.ms-excel';
+        case '.xlsx':
+            return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        case '.ppt':
+            return 'application/vnd.ms-powerpoint';
+        case '.pptx':
+            return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+        default:
+            return '';
+    }
+}
+
+function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function renderAttachmentPreviews() {
+    const previewContainer = document.getElementById('attachmentPreview');
+    if (!previewContainer) return;
+    
+    previewContainer.innerHTML = '';
+    
+    pendingAttachments.forEach(attachment => {
+        const item = document.createElement('div');
+        const type = attachment.displayType || getAttachmentDisplayType(attachment);
+        item.className = `attachment-item ${type}`;
+        item.title = `${attachment.name} • ${formatFileSize(attachment.size)} • ${getAttachmentSourceLabel(attachment.source)}`;
+        
+        const thumb = document.createElement('div');
+        thumb.className = 'attachment-thumb';
+        
+        if (type === 'image' && attachment.dataUrl) {
+            const image = document.createElement('img');
+            image.src = attachment.dataUrl;
+            image.alt = attachment.name;
+            thumb.appendChild(image);
+        } else {
+            thumb.textContent = getAttachmentLabel(attachment.name);
+        }
+        
+        const meta = document.createElement('div');
+        meta.className = 'attachment-meta';
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'attachment-name';
+        nameSpan.textContent = attachment.name;
+        
+        const sizeSpan = document.createElement('span');
+        sizeSpan.className = 'attachment-size';
+        sizeSpan.textContent = `${formatFileSize(attachment.size)} • ${getAttachmentSourceLabel(attachment.source)}`;
+        
+        meta.appendChild(nameSpan);
+        meta.appendChild(sizeSpan);
+        
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'attachment-remove';
+        removeButton.setAttribute('aria-label', `Remove ${attachment.name}`);
+        removeButton.innerHTML = `
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M18.3 5.71L12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.3 19.71 2.89 18.3 9.18 12 2.89 5.71 4.3 4.29 10.59 10.6l6.29-6.31z"/>
+            </svg>
+        `;
+        removeButton.addEventListener('click', () => removePendingAttachment(attachment.id));
+        
+        item.appendChild(thumb);
+        item.appendChild(meta);
+        item.appendChild(removeButton);
+        
+        previewContainer.appendChild(item);
+    });
+}
+
+function removePendingAttachment(id) {
+    pendingAttachments = pendingAttachments.filter(att => att.id !== id);
+    renderAttachmentPreviews();
+    
+    if (pendingAttachments.length === 0) {
+        clearAttachmentFeedback();
+    }
+}
+
+function clearPendingAttachments(resetFeedback = false) {
+    pendingAttachments = [];
+    renderAttachmentPreviews();
+    if (resetFeedback) {
+        clearAttachmentFeedback();
+    }
+}
+
+function showAttachmentFeedback(message, tone = 'info') {
+    const feedback = document.getElementById('attachmentFeedback');
+    if (!feedback) return;
+    
+    feedback.textContent = message;
+    feedback.classList.remove('error', 'warning');
+    
+    if (tone === 'error') {
+        feedback.classList.add('error');
+    } else if (tone === 'warning') {
+        feedback.classList.add('warning');
+    }
+}
+
+function clearAttachmentFeedback() {
+    const feedback = document.getElementById('attachmentFeedback');
+    if (!feedback) return;
+    feedback.textContent = '';
+    feedback.classList.remove('error', 'warning');
+}
+
+function getAttachmentSourceLabel(source) {
+    return source === 'clipboard' ? 'Clipboard' : 'Upload';
 }
 
 // Initialize apply button
@@ -1118,21 +1664,27 @@ function initializeApplyButton() {
 function sendMessage() {
     const chatInput = document.getElementById('chatInput');
     const message = chatInput.value.trim();
+    const attachmentsForMessage = pendingAttachments.map(att => ({ ...att }));
     
-    if (!message) return;
+    if (!message && attachmentsForMessage.length === 0) {
+        return;
+    }
     
     // Add user message to chat
-    addMessageToChat('user', message);
+    addMessageToChat('user', message, attachmentsForMessage);
+    
+    const latestMessage = messageHistory[messageHistory.length - 1];
     
     // Clear input
     chatInput.value = '';
     chatInput.style.height = 'auto';
+    clearPendingAttachments(true);
     
     // Show typing indicator
     showTypingIndicator();
     
     // Generate AI response
-    generateAIResponse(message).then(() => {
+    generateAIResponse(latestMessage).then(() => {
         hideTypingIndicator();
     }).catch(() => {
         hideTypingIndicator();
@@ -1164,40 +1716,23 @@ function formatMessage(content) {
 }
 
 // Add message to chat display
-function addMessageToChat(sender, content) {
+function addMessageToChat(sender, content, attachments = []) {
     const chatMessages = document.getElementById('chatMessages');
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${sender}`;
+    const normalizedAttachments = Array.isArray(attachments)
+        ? attachments.map(att => ({ ...att }))
+        : [];
     
-    if (sender === 'ai') {
-        const personalityBadge = getPersonalityBadge();
-        const formattedContent = formatMessage(content);
-        messageDiv.innerHTML = `
-            <div class="personality-badge">${personalityBadge}</div>
-            <div class="message-bubble">${formattedContent}</div>
-        `;
-    } else {
-        // For user messages, escape HTML but preserve line breaks
-        const escapedContent = content
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;')
-            .replace(/\n/g, '<br>');
-        messageDiv.innerHTML = `<div class="message-bubble">${escapedContent}</div>`;
-    }
-    
-    chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    // Store in history with timestamp
     const messageData = { 
         sender, 
         content, 
+        attachments: normalizedAttachments,
         parameters: {...currentParameters},
         timestamp: Date.now()
     };
+    
+    chatMessages.appendChild(createMessageElement(messageData));
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    
     messageHistory.push(messageData);
     
     // Auto-save chat after adding message
@@ -1210,7 +1745,7 @@ function addMessageToChat(sender, content) {
 }
 
 // Generate AI response based on current parameters
-async function generateAIResponse(userMessage) {
+async function generateAIResponse(latestUserMessage) {
     if (!config || !config.openRouterApiKey || config.openRouterApiKey === 'your-openrouter-api-key-here') {
         addMessageToChat('ai', 'Please configure your OpenRouter API key in config.json to use the chat functionality.');
         return;
@@ -1220,8 +1755,9 @@ async function generateAIResponse(userMessage) {
         // Build the system prompt using Anti-Sycophancy Engine
         let systemPrompt;
         try {
+            const promptInput = buildPromptInput(latestUserMessage);
             systemPrompt = antiSycophancyEngine.generateSystemPrompt(
-                userMessage, 
+                promptInput, 
                 messageHistory, 
                 currentParameters
             );
@@ -1229,7 +1765,7 @@ async function generateAIResponse(userMessage) {
             // Debug logging if enabled
             if (config.debug) {
                 console.log('=== SYSTEM PROMPT DEBUG ===');
-                console.log('User Message:', userMessage);
+                console.log('User Message:', buildPromptInput(latestUserMessage));
                 console.log('Current Parameters:', currentParameters);
                 console.log('Generated System Prompt:');
                 console.log(systemPrompt);
@@ -1248,15 +1784,13 @@ async function generateAIResponse(userMessage) {
         }
         
         // Prepare request payload
+        const conversationMessages = messageHistory.map(msg => convertMessageForApi(msg));
+
         const requestPayload = {
             model: selectedModel,
             messages: [
                 { role: 'system', content: systemPrompt },
-                ...messageHistory.map(msg => ({
-                    role: msg.sender === 'user' ? 'user' : 'assistant',
-                    content: msg.content
-                })),
-                { role: 'user', content: userMessage }
+                ...conversationMessages
             ],
             temperature: config.temperature || 0.7,
             max_tokens: config.maxTokens || 4096
@@ -1305,10 +1839,24 @@ async function generateAIResponse(userMessage) {
             throw new Error('Invalid response structure from API');
         }
         
-        let aiResponse = data.choices[0].message.content;
+        const aiMessage = data.choices[0].message;
+        let aiResponse = aiMessage.content;
+        if (Array.isArray(aiResponse)) {
+            aiResponse = aiResponse.map(part => {
+                if (typeof part === 'string') return part;
+                if (part?.text) return part.text;
+                if (part?.type === 'output_text' && part?.output_text?.content) {
+                    return part.output_text.content;
+                }
+                return '';
+            }).join('\n').trim();
+        }
         
         // Apply anti-sycophancy engine logic
-        const context = antiSycophancyEngine.analyzeConversationContext(userMessage, messageHistory);
+        const context = antiSycophancyEngine.analyzeConversationContext(
+            buildPromptInput(latestUserMessage),
+            messageHistory
+        );
         if (context.shouldChallenge) {
             if (context.preferredChallengeType === 'devils_advocate' || 
                 context.preferredChallengeType === 'perspective_shift') {
